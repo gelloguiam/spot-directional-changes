@@ -1,0 +1,20 @@
+[ TASKS ]
+*A. (average) Integrate yolo code to existing codeintegrate yolo code to existing code
+*B. (light) Improve preprocessing (resize, rotate) - put it to a function for reusability
+*C.1 (average) Preprocess A: Extract foreground from frame, clean noise from foreground, perform morphological transformation (implement as function for reusability, input: foreground mask, output: enhanced foreground)
+*C.2 (average) Preprocess B: Extract background from frame, blur/supress edges from background shape (implement as function for reusability, input: background mask, output: enhanced background)
+*D. (average) Merge modified foreground and background. Integrate Task B, C.1, and C.2 to the YOLO loop
+*E. (heavy) Workon direction tracking of human objects, work inside YOLO main loop
+*F. (heavy) Determine/alert objects that changes direction significantly, works inside YOLO main loop
+*G. (light) Revise paper (Intro, Related Works, Methodology) put it to overleaf
+*H. (light) Draft the results and discussion
+*I. (average) Draft the conclusion and recommendation
+*J. (average) Final formatting of paper (citation, figures, etc)
+*K. (light) Final proofreading of paper
+*L. (average) Prepare presentation slides, compile video output for each step for presentation (get vid from each tasks)
+
+Assignment:
+1. Gelo - A (average), F (heavy), K (light), H (draft the result of the assigned task)
+2. @Rean Goloy - B (light), C.1 (average), G(light), I (light), H (draft the result of the assigned task)
+3. @Triệu Xuân Hòa - C.2 (average), D (average), J (average), H (draft the result of the assigned task)
+4. @Eht Ydobon - E (heavy), L (average), H (draft the result of the assigned task)
