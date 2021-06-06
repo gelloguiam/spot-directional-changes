@@ -33,21 +33,6 @@ flags.DEFINE_string('video', './data/video/sample-org.mov', 'path to input video
 flags.DEFINE_string('output', 'output/output.mp4', 'path to output video')
 
 
-# def preprocess(image):
-#     return image
-#     hsv_img = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-#     clahe = cv2.createCLAHE(clipLimit = 2.0)
-
-#     channels = cv2.split(hsv_img)
-#     channels[0] = clahe.apply(channels[0])
-#     channels[1] = clahe.apply(channels[1])
-#     channels[2] = clahe.apply(channels[2])
-
-#     hsv_img = cv2.merge(channels)
-#     hsv_img = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2BGR)
-#     return hsv_img
-
-
 def main(_argv):
     # Definition of the parameters
     max_cosine_distance = 0.4
@@ -167,8 +152,7 @@ def main(_argv):
         scores = np.delete(scores, deleted_indx, axis=0)
 
         count = len(names)
-        # print("before maximum supression: {} ".format(count))
-        cv2.putText(frame, "Tracking {} people. Frame: {}".format(count, frame_num), (10, 50), cv2.FONT_HERSHEY_PLAIN, 1, (0, 255, 0), 1)
+        cv2.putText(frame, "Tracking {} people on frame {}".format(count, frame_num), (10, 50), cv2.FONT_HERSHEY_PLAIN, 1, (0, 255, 0), 1)
 
         # encode yolo detections and feed to tracker
         features = encoder(frame, bboxes)
@@ -184,8 +168,6 @@ def main(_argv):
         classes = np.array([d.class_name for d in detections])
         indices = preprocessing.non_max_suppression(boxs, classes, nms_max_overlap, scores)
         detections = [detections[i] for i in indices]
-
-        # print("after maximum supression: {} ".format(len(detections)))
 
         # Call the tracker
         tracker.predict()
@@ -203,11 +185,12 @@ def main(_argv):
             y1 = int(bbox[1])
             y2 = int(bbox[3])
 
-            # cX = int((x1 + x2)/2)
-            # cY = int((y1 + y2)/2)
+            area = (x2-x1)*(y2-y1)
+            if area > 100000: continue
 
-            cX = x1
-            cY = y1
+            # get centroid of the bounding box
+            cX = int((x1 + x2)/2)
+            cY = int((y1 + y2)/2)
             
             curr_centroid = (cX, cY)
             prev_centroid_1 = track.get_last_centroid(1)
@@ -235,23 +218,29 @@ def main(_argv):
             angle_diff = round(angle_diff, 2)
             angle_1 = round(angle_1, 2)
 
-            if(track.track_id == 21):
-                print(angle_diff)
+            # if(track.track_id == 21):
+            #     print(angle_diff)
 
         # draw bbox on screen
             color = colors[int(track.track_id) % len(colors)]
             color = [i * 255 for i in color]
 
-            if angle_diff > 50:
-            # if prev_centroid_1 is not None and prev_centroid_2 is not None:
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
-                print(track.track_id, angle_1, angle_2, angle_diff)
+            # if angle_diff > 50:
+            # # if prev_centroid_1 is not None and prev_centroid_2 is not None:
+            #     cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
+            #     print(track.track_id, angle_1, angle_2, angle_diff)
 
                 # cv2.rectangle(frame, (x1, y1-30), (x1+(len(str(angle_diff)))*17, y1), color, -1)
                 # cv2.putText(frame, str(angle_diff),(x1, y1-10), 0 , 0.75, (255,255,255), 2)
                 # cv2.line(frame, curr_centroid, prev_centroid_1,color,3)
                 # cv2.line(frame, prev_centroid_1, prev_centroid_2,color,3)
-            cv2.putText(frame, str(track.track_id),(x1, y1-10), 0 , 0.75, color, 2)
+            # cv2.putText(frame, str(track.track_id),(x1, y1-10), 0 , 0.75, color, 2)
+
+            all_centroids = track.centroids
+            for cent in all_centroids:
+                cv2.circle(frame, cent, radius=0, color=color, thickness=5)
+
+            # cv2.putText(frame, str(curr_centroid),(x1, y1-10), 0 , 0.75, color, 2)
 
             # else:
             # cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
