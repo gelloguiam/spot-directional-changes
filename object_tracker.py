@@ -15,6 +15,7 @@ from PIL import Image
 from tensorflow.compat.v1 import ConfigProto
 from tensorflow.compat.v1 import InteractiveSession
 from tensorflow.python.saved_model import tag_constants
+import spot_library as spot
 
 from deep_sort import preprocessing, nn_matching
 from deep_sort.detection import Detection
@@ -22,37 +23,30 @@ from deep_sort.tracker import Tracker
 from tools import generate_detections as gdet
 
 
-flags.DEFINE_string('framework', 'tf', '(tf, tflite, trt')
-flags.DEFINE_string('weights', './checkpoints/yolov4-416',
-                    'path to weights file')
+flags.DEFINE_string('weights', './checkpoints/yolov4-416', 'path to weights file')
 flags.DEFINE_integer('size', 416, 'resize images to')
 flags.DEFINE_boolean('tiny', False, 'yolo or yolo-tiny')
 flags.DEFINE_string('model', 'yolov4', 'yolov3 or yolov4')
-# flags.DEFINE_string('video', './data/video/sample.mov', 'path to input video or set to 0 for webcam')
-flags.DEFINE_string('video', './data/video/sample-org.mov', 'path to input video or set to 0 for webcam')
-flags.DEFINE_string('output', None, 'path to output video')
-flags.DEFINE_string('output_format', 'XVID', 'codec used in VideoWriter when saving video to file')
 flags.DEFINE_float('iou', 0.20, 'iou threshold')
 flags.DEFINE_float('score', 0.10, 'score threshold')
-flags.DEFINE_boolean('dont_show', False, 'dont show video output')
-flags.DEFINE_boolean('info', True, 'show detailed info of tracked objects')
-flags.DEFINE_boolean('count', True, 'count objects being tracked on screen')
+flags.DEFINE_string('video', './data/video/sample-org.mov', 'path to input video or set to 0 for webcam')
+flags.DEFINE_string('output', 'output/output.mp4', 'path to output video')
 
-# OUTPUT_VID_FILENAME = "output.mov"
 
-def preprocess(image):
-    return image
-    hsv_img = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    clahe = cv2.createCLAHE(clipLimit = 2.0)
+# def preprocess(image):
+#     return image
+#     hsv_img = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+#     clahe = cv2.createCLAHE(clipLimit = 2.0)
 
-    channels = cv2.split(hsv_img)
-    channels[0] = clahe.apply(channels[0])
-    channels[1] = clahe.apply(channels[1])
-    channels[2] = clahe.apply(channels[2])
+#     channels = cv2.split(hsv_img)
+#     channels[0] = clahe.apply(channels[0])
+#     channels[1] = clahe.apply(channels[1])
+#     channels[2] = clahe.apply(channels[2])
 
-    hsv_img = cv2.merge(channels)
-    hsv_img = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2BGR)
-    return hsv_img
+#     hsv_img = cv2.merge(channels)
+#     hsv_img = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2BGR)
+#     return hsv_img
+
 
 def main(_argv):
     # Definition of the parameters
@@ -87,36 +81,32 @@ def main(_argv):
     except:
         vid = cv2.VideoCapture(video_path)
 
-    out = None
-
-
-    height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    #define video writer to output video
+    video_writer = None
     width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(vid.get(cv2.CAP_PROP_FPS))
     codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
-    video_writer = cv2.VideoWriter("output.mp4", codec, fps, (width, height))
+    video_writer = cv2.VideoWriter(FLAGS.output, codec, fps, (width, height))
 
     frame_num = 0
-    # while video is running
+
     while True:
-        # break
         return_value, frame = vid.read()
         if return_value:
-            frame = preprocess(frame)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(frame)
         else:
             print('Video has ended or failed, try a different video format!')
             break
 
-        frame_num +=1
-        if frame_num < 1200: continue
+        frame_num += 1
+        # if frame_num < 1200: continue
 
         print('Frame #: ', frame_num)
         image_data = cv2.resize(frame, (input_size, input_size))
         image_data = image_data / 255.
         image_data = image_data[np.newaxis, ...].astype(np.float32)
-        start_time = time.time()
 
         batch_data = tf.constant(image_data)
         pred_bbox = infer(batch_data)
@@ -227,13 +217,11 @@ def main(_argv):
             angle_2 = 500
 
             if prev_centroid_1 is not None and prev_centroid_2 is not None:
-                # if prev_centroid_1 == prev_centroid_2 or prev_centroid_1 == curr_centroid:
-                #     print(curr_centroid, prev_centroid_1, prev_centroid_2)
-                distance = get_distance(curr_centroid, prev_centroid_1)
+                distance = spot.get_distance(curr_centroid, prev_centroid_1)
                 if(distance > 1 and distance < 10):
 
-                    angle_1 = get_angle(prev_centroid_1, curr_centroid)
-                    angle_2 = get_angle(prev_centroid_2, prev_centroid_1)
+                    angle_1 = spot.get_angle(prev_centroid_1, curr_centroid)
+                    angle_2 = spot.get_angle(prev_centroid_2, prev_centroid_1)
 
                     if(angle_1 == 0 or angle_2 == 0):
                         angle_1 = 0
@@ -279,68 +267,20 @@ def main(_argv):
 
             # print("Tracker ID: {}, Class: {},  BBox Coords (xmin, ymin, xmax, ymax): {}".format(str(track.track_id), class_name, (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))))
 
-        # calculate frames per second of running detections
-        # fps = 1.0 / (time.time() - start_time)
-        # print("FPS: %.2f" % fps)
         result = np.asarray(frame)
         result = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         
         cv2.imshow("Output Video", result)
-        # video_writer.write(result)
 
-        if frame_num == fps*4: break
-        
-        # if output flag is set, save video file
-        # if FLAGS.output:
-        #     out.write(result)
+        # write the result
+        video_writer.write(result)
 
-        c = cv2.waitKey(1) % 0x100                      #listen for ESC key
+        # ESC to end video
+        c = cv2.waitKey(1) % 0x100
         if c == 27: break
 
     cv2.destroyAllWindows()
 
-
-# def get_angle(p1, p2):
-#     (x1, y1) = p1
-#     (x2, y2) = p2
-
-#     deltaX = x2-x1
-#     deltaY = y2-y1
-
-#     rads = math.atan2(deltaY, deltaX)
-#     return math.degrees(rads)
-
-
-def get_angle(p1, p2):
-    (x1, y1) = p1
-    (x2, y2) = p2
-    x3 = x1
-    y3 = y2
-
-    p3 = (x3, y3)
-
-    a = get_distance(p1, p2)
-    b = get_distance(p1, p3)
-    c = get_distance(p2, p3)
-
-    if b == 0 or c == 0:
-        # print("ZERO:", p1, p2, p3, a, b, c)
-        return 0
-
-    z = (c**2 - a**2 - b**2)/(-2*b*a)
-    angle_rad = math.acos(z)
-    angle_deg = math.degrees(angle_rad)
-
-    return angle_deg
-    # print(p1, p2, p3, a, b, c, angle_deg)
-
-
-def get_distance(p1, p2):
-    (x1, y1) = p1
-    (x2, y2) = p2
-
-    d = math.sqrt((x2-x1)**2 + (y2-y1)**2)
-    return d
 
 if __name__ == '__main__':
     try:
