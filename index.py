@@ -5,9 +5,9 @@ import sys
 # from tracker import *
 
 #decalare constants here
-INPUT_VID_FILENAME = "data//test-2.mp4"
-INPUT_VID_FILENAME = "asset/physci-edited-480p.mov"
-OUTPUT_VID_FILENAME = "sample.mov"
+INPUT_VID_FILENAME = "data/video/physci-edited-480p.mov"
+INPUT_VID_FILENAME = "data/video/car-overhead-3.mov"
+OUTPUT_VID_FILENAME = "data/video/sample.mov"
 # tracker = EuclideanDistTracker()
 colors = {}
 
@@ -109,8 +109,10 @@ def main():
         print("Could not open video file " + str(INPUT_VID_FILENAME))
         sys.exit(1)
 
-    height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)*2)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)*2)
+    # height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)*2)
+    # width = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)*2)
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)*2)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)*2)
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
     video_writer = cv2.VideoWriter(OUTPUT_VID_FILENAME, codec, fps, (width, height))
@@ -118,16 +120,20 @@ def main():
     backSub = cv2.createBackgroundSubtractorKNN()
 
 
-    prev_frame = np.array([])                               #save previous frame
+    prev_frame = np.array([])     
+    frame_number = 0                          #save previous frame
     while(cap.isOpened()):                                  #loop all frames
         ret, frame = cap.read()                             #capture each frame
+
+        frame_number = frame_number +1
+        if frame_number < 400: continue
 
         width = int(frame.shape[1] * 2)
         height = int(frame.shape[0] * 2)
         dim = (width, height)
 
         frame = cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)
-        frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        # frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
 
         mask = backSub.apply(frame)
         extracted = cv2.bitwise_and(frame, frame, mask=mask)
@@ -159,14 +165,13 @@ def main():
             # cv2.imshow("CLAHE", enhanced_img)
             # cv2.imshow("Foreground", foreground)
             cv2.imshow("FG", extracted_fg)
-            cv2.imshow("BG", extracted_fg)
+            cv2.imshow("BG", extracted_bg)
             cv2.imshow("Objects", final)
 
             video_writer.write(final)
 
             c = cv2.waitKey(1) % 0x100                      #listen for ESC key
-            if c == 27:
-                break
+            if c == 27: break
 
         prev_frame = enhanced_img
 

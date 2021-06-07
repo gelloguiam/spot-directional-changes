@@ -1,6 +1,8 @@
+from re import X
 import cv2
 import core.utils as utils
 import matplotlib.pyplot as plt
+import math
 import numpy as np
 import tensorflow as tf
 import time
@@ -13,6 +15,7 @@ from PIL import Image
 from tensorflow.compat.v1 import ConfigProto
 from tensorflow.compat.v1 import InteractiveSession
 from tensorflow.python.saved_model import tag_constants
+import spot_library as spot
 
 from deep_sort import preprocessing, nn_matching
 from deep_sort.detection import Detection
@@ -20,35 +23,14 @@ from deep_sort.tracker import Tracker
 from tools import generate_detections as gdet
 
 
-flags.DEFINE_string('framework', 'tf', '(tf, tflite, trt')
-flags.DEFINE_string('weights', './checkpoints/yolov4-416',
-                    'path to weights file')
+flags.DEFINE_string('weights', './checkpoints/yolov4-416', 'path to weights file')
 flags.DEFINE_integer('size', 416, 'resize images to')
 flags.DEFINE_boolean('tiny', False, 'yolo or yolo-tiny')
 flags.DEFINE_string('model', 'yolov4', 'yolov3 or yolov4')
-flags.DEFINE_string('video', './data/video/sample.mov', 'path to input video or set to 0 for webcam')
-flags.DEFINE_string('output', None, 'path to output video')
-flags.DEFINE_string('output_format', 'XVID', 'codec used in VideoWriter when saving video to file')
 flags.DEFINE_float('iou', 0.20, 'iou threshold')
 flags.DEFINE_float('score', 0.10, 'score threshold')
-flags.DEFINE_boolean('dont_show', False, 'dont show video output')
-flags.DEFINE_boolean('info', True, 'show detailed info of tracked objects')
-flags.DEFINE_boolean('count', True, 'count objects being tracked on screen')
-
-
-def preprocess(image):
-    return image
-    hsv_img = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    clahe = cv2.createCLAHE(clipLimit = 2.0)
-
-    channels = cv2.split(hsv_img)
-    channels[0] = clahe.apply(channels[0])
-    channels[1] = clahe.apply(channels[1])
-    channels[2] = clahe.apply(channels[2])
-
-    hsv_img = cv2.merge(channels)
-    hsv_img = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2BGR)
-    return hsv_img
+flags.DEFINE_string('video', './data/video/sample-org.mov', 'path to input video or set to 0 for webcam')
+flags.DEFINE_string('output', 'output/output.mp4', 'path to output video')
 
 
 def main(_argv):
@@ -84,26 +66,32 @@ def main(_argv):
     except:
         vid = cv2.VideoCapture(video_path)
 
-    out = None
+    #define video writer to output video
+    video_writer = None
+    width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = int(vid.get(cv2.CAP_PROP_FPS))
+    codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
+    video_writer = cv2.VideoWriter(FLAGS.output, codec, fps, (width, height))
 
     frame_num = 0
-    # while video is running
+
     while True:
         return_value, frame = vid.read()
         if return_value:
-            frame = preprocess(frame)
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(frame)
         else:
             print('Video has ended or failed, try a different video format!')
             break
 
-        frame_num +=1
+        frame_num += 1
+        # if frame_num < 1200: continue
+
         print('Frame #: ', frame_num)
         image_data = cv2.resize(frame, (input_size, input_size))
         image_data = image_data / 255.
         image_data = image_data[np.newaxis, ...].astype(np.float32)
-        start_time = time.time()
 
         batch_data = tf.constant(image_data)
         pred_bbox = infer(batch_data)
@@ -137,6 +125,8 @@ def main(_argv):
         # store all predictions in one parameter for simplicity when calling functions
         pred_bbox = [bboxes, scores, classes, num_objects]
 
+        # print("all objects: {} ".format(num_objects))
+
         # read in all class names from config
         class_names = utils.read_class_names(cfg.YOLO.CLASSES)
 
@@ -161,8 +151,8 @@ def main(_argv):
         bboxes = np.delete(bboxes, deleted_indx, axis=0)
         scores = np.delete(scores, deleted_indx, axis=0)
 
-        count = len(scores)
-        cv2.putText(frame, "Tracking {} people.".format(count), (10, 50), cv2.FONT_HERSHEY_PLAIN, 1, (0, 255, 0), 1)
+        count = len(names)
+        cv2.putText(frame, "Tracking {} people on frame {}".format(count, frame_num), (10, 50), cv2.FONT_HERSHEY_PLAIN, 1, (0, 255, 0), 1)
 
         # encode yolo detections and feed to tracker
         features = encoder(frame, bboxes)
@@ -177,7 +167,7 @@ def main(_argv):
         scores = np.array([d.confidence for d in detections])
         classes = np.array([d.class_name for d in detections])
         indices = preprocessing.non_max_suppression(boxs, classes, nms_max_overlap, scores)
-        detections = [detections[i] for i in indices]       
+        detections = [detections[i] for i in indices]
 
         # Call the tracker
         tracker.predict()
@@ -189,29 +179,97 @@ def main(_argv):
                 continue 
             bbox = track.to_tlbr()
             class_name = track.get_class()
+
+            x1 = int(bbox[0])
+            x2 = int(bbox[2])
+            y1 = int(bbox[1])
+            y2 = int(bbox[3])
+
+            area = (x2-x1)*(y2-y1)
+            if area > 100000: continue
+
+            # get centroid of the bounding box
+            cX = int((x1 + x2)/2)
+            cY = int((y1 + y2)/2)
             
+            curr_centroid = (cX, cY)
+            prev_centroid_1 = track.get_last_centroid(1)
+            prev_centroid_2 = track.get_last_centroid(2)
+
+            angle_1 = 500
+            angle_2 = 500
+
+            if prev_centroid_1 is not None and prev_centroid_2 is not None:
+                distance = spot.get_distance(curr_centroid, prev_centroid_1)
+                if(distance > 1 and distance < 10):
+
+                    angle_1 = spot.get_angle(prev_centroid_1, curr_centroid)
+                    angle_2 = spot.get_angle(prev_centroid_2, prev_centroid_1)
+
+                    if(angle_1 == 0 or angle_2 == 0):
+                        angle_1 = 0
+                        angle_2 = 0
+
+                    # if abs(angle_1-angle_2) > 10:
+                    #     print(track.track_id, "distance", distance, angle_1, angle_2)
+
+            track.update_centroid(cX, cY)
+            angle_diff = abs(angle_1-angle_2)
+            angle_diff = round(angle_diff, 2)
+            angle_1 = round(angle_1, 2)
+
+            # if(track.track_id == 21):
+            #     print(angle_diff)
+
         # draw bbox on screen
             color = colors[int(track.track_id) % len(colors)]
             color = [i * 255 for i in color]
-            cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), color, 2)
-            cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(str(track.track_id)))*17, int(bbox[1])), color, -1)
-            cv2.putText(frame, str(track.track_id),(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255), 2)
 
-            print("Tracker ID: {}, Class: {},  BBox Coords (xmin, ymin, xmax, ymax): {}".format(str(track.track_id), class_name, (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))))
+            # if angle_diff > 50:
+            # # if prev_centroid_1 is not None and prev_centroid_2 is not None:
+            #     cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
+            #     print(track.track_id, angle_1, angle_2, angle_diff)
 
-        # calculate frames per second of running detections
-        fps = 1.0 / (time.time() - start_time)
-        print("FPS: %.2f" % fps)
+                # cv2.rectangle(frame, (x1, y1-30), (x1+(len(str(angle_diff)))*17, y1), color, -1)
+                # cv2.putText(frame, str(angle_diff),(x1, y1-10), 0 , 0.75, (255,255,255), 2)
+                # cv2.line(frame, curr_centroid, prev_centroid_1,color,3)
+                # cv2.line(frame, prev_centroid_1, prev_centroid_2,color,3)
+            # cv2.putText(frame, str(track.track_id),(x1, y1-10), 0 , 0.75, color, 2)
+
+            all_centroids = track.centroids
+            for cent in all_centroids:
+                cv2.circle(frame, cent, radius=0, color=color, thickness=5)
+
+            # cv2.putText(frame, str(curr_centroid),(x1, y1-10), 0 , 0.75, color, 2)
+
+            # else:
+            # cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
+            #     cv2.rectangle(frame, (x1, y1-30), (x1+(len(str(angle_1)))*17, y1), color, -1)
+            #     cv2.putText(frame, str(angle_1),(x1, y1-10), 0 , 0.75, (255,255,255), 2)
+
+            # cv2.putText(frame, str(track.track_id),(x1, y1-25), 0 , 0.75, (0,255,0), 2)
+
+            # cv2.rectangle(frame, (x1, y1-30), (x1+(len(str(track.track_id)))*17, y1), color, -1)
+            # cv2.putText(frame, str(track.track_id),(x1, y1-10), 0 , 0.75, (255,255,255), 2)
+
+            # cv2.circle(frame, (cX, cY), radius=0, color=color, thickness=20)
+
+            # print("Tracker ID: {}, Class: {},  BBox Coords (xmin, ymin, xmax, ymax): {}".format(str(track.track_id), class_name, (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))))
+
         result = np.asarray(frame)
         result = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         
         cv2.imshow("Output Video", result)
-        
-        # if output flag is set, save video file
-        if FLAGS.output:
-            out.write(result)
-        if cv2.waitKey(1) & 0xFF == ord('q'): break
+
+        # write the result
+        video_writer.write(result)
+
+        # ESC to end video
+        c = cv2.waitKey(1) % 0x100
+        if c == 27: break
+
     cv2.destroyAllWindows()
+
 
 if __name__ == '__main__':
     try:
