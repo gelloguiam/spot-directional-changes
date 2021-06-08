@@ -29,8 +29,13 @@ flags.DEFINE_boolean('tiny', False, 'yolo or yolo-tiny')
 flags.DEFINE_string('model', 'yolov4', 'yolov3 or yolov4')
 flags.DEFINE_float('iou', 0.20, 'iou threshold')
 flags.DEFINE_float('score', 0.10, 'score threshold')
-flags.DEFINE_string('video', './data/video/sample-org.mov', 'path to input video or set to 0 for webcam')
+flags.DEFINE_string('video', './data/video/physci-edited-480p.mov', 'path to input video or set to 0 for webcam')
 flags.DEFINE_string('output', 'output/output.mp4', 'path to output video')
+flags.DEFINE_string('direction', '', 'pedestrian direction to map')
+flags.DEFINE_integer('mode', 0, '0 - detect pedestrian significantly changing direction, 1 - detect pedestrian who go against the general direction of all objects in the frame, 2 - detect pedestrian who go against the set direction')
+flags.DEFINE_boolean('rotate', False, 'rotate image')
+flags.DEFINE_boolean('scale', False, 'scale image')
+flags.DEFINE_boolean('preprocess', False, 'preprocess the image before tracking')
 
 
 def main(_argv):
@@ -66,19 +71,63 @@ def main(_argv):
     except:
         vid = cv2.VideoCapture(video_path)
 
+    frame_num = 0
+
+    # get direction detection mode
+    detection_mode = FLAGS.mode
+
+    if detection_mode == 2:
+        default_direction = FLAGS.direction
+    else:
+        default_direction = ""
+
+    # get processing attributes
+    rotate_flag = FLAGS.rotate
+    scale_flag = FLAGS.scale
+    preprocess_flag = FLAGS.preprocess
+
+    #create background model
+    backSub = cv2.createBackgroundSubtractorKNN()
+
     #define video writer to output video
     video_writer = None
-    width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if scale_flag:
+        width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH)*2)
+        height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT)*2)
+
+    else:
+        width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if rotate_flag:
+        tmp = width
+        width = height
+        height = tmp
+
     fps = int(vid.get(cv2.CAP_PROP_FPS))
     codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
     video_writer = cv2.VideoWriter(FLAGS.output, codec, fps, (width, height))
 
-    frame_num = 0
-
     while True:
         return_value, frame = vid.read()
         if return_value:
+
+            # rotate frame by 90 degrees if rotate flag is True
+            if rotate_flag:
+                frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+
+            # scale frame to 200% if scale flag is True
+            if scale_flag:
+                width = int(frame.shape[1] * 2)
+                height = int(frame.shape[0] * 2)
+                dim = (width, height)
+                frame = cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)
+
+            # enahnce frame if preprocess flag is True
+            if preprocess_flag:
+                fg, bg, frame = spot.preprocessing(frame, backSub)
+
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(frame)
         else:
@@ -86,7 +135,8 @@ def main(_argv):
             break
 
         frame_num += 1
-        # if frame_num < 1200: continue
+
+        directions = []
 
         print('Frame #: ', frame_num)
         image_data = cv2.resize(frame, (input_size, input_size))
@@ -125,8 +175,6 @@ def main(_argv):
         # store all predictions in one parameter for simplicity when calling functions
         pred_bbox = [bboxes, scores, classes, num_objects]
 
-        # print("all objects: {} ".format(num_objects))
-
         # read in all class names from config
         class_names = utils.read_class_names(cfg.YOLO.CLASSES)
 
@@ -152,7 +200,21 @@ def main(_argv):
         scores = np.delete(scores, deleted_indx, axis=0)
 
         count = len(names)
-        cv2.putText(frame, "Tracking {} people on frame {}".format(count, frame_num), (10, 50), cv2.FONT_HERSHEY_PLAIN, 1, (0, 255, 0), 1)
+
+        session_title = "Tracking pedestrian "
+
+        if(detection_mode == 0):
+            session_title += "significantly changing direction"
+        else:
+            session_title += "not moving in {} direction".format(default_direction)
+
+        session_summary = "Frame {} tracking {} pedestrian".format(frame_num, count)
+
+        cv2.rectangle(frame, (10, 12), (15+(len(session_title)*11), 35), (0, 0, 0), -1)
+        cv2.putText(frame, session_title, (10, 30), cv2.FONT_HERSHEY_PLAIN, 1.3, (0, 255, 0), 1)
+
+        cv2.rectangle(frame, (10, 42), (15+(len(session_summary)*12), 65), (0, 0, 0), -1)
+        cv2.putText(frame, session_summary, (10, 60), cv2.FONT_HERSHEY_PLAIN, 1.3, (0, 255, 0), 1)
 
         # encode yolo detections and feed to tracker
         features = encoder(frame, bboxes)
@@ -169,7 +231,7 @@ def main(_argv):
         indices = preprocessing.non_max_suppression(boxs, classes, nms_max_overlap, scores)
         detections = [detections[i] for i in indices]
 
-        # Call the tracker
+        # call the tracker
         tracker.predict()
         tracker.update(detections)
 
@@ -196,69 +258,74 @@ def main(_argv):
             prev_centroid_1 = track.get_last_centroid(1)
             prev_centroid_2 = track.get_last_centroid(2)
 
-            angle_1 = 500
-            angle_2 = 500
+            slope = 0
 
+            dir_1 = ""
+            dir_2 = ""
+            dir_3 = ""
+
+            track_direction = None
             if prev_centroid_1 is not None and prev_centroid_2 is not None:
-                distance = spot.get_distance(curr_centroid, prev_centroid_1)
-                if(distance > 1 and distance < 10):
+                track_direction = spot.get_direction(prev_centroid_2, curr_centroid)
 
-                    angle_1 = spot.get_angle(prev_centroid_1, curr_centroid)
-                    angle_2 = spot.get_angle(prev_centroid_2, prev_centroid_1)
+                # store directions of all objects in the frame
+                directions.append(track_direction)
 
-                    if(angle_1 == 0 or angle_2 == 0):
-                        angle_1 = 0
-                        angle_2 = 0
+                #check if position change is significant to compare
+                distance = spot.get_distance(prev_centroid_1, curr_centroid)
+                if distance > 20:
+                    slope = spot.get_slope(prev_centroid_1, curr_centroid)
+                    dir_1 = spot.get_direction(prev_centroid_1, curr_centroid)
+                    dir_2 = spot.get_direction(prev_centroid_2, prev_centroid_1)
+                    dir_3 = spot.get_direction(track.get_last_centroid(0), curr_centroid)
 
-                    # if abs(angle_1-angle_2) > 10:
-                    #     print(track.track_id, "distance", distance, angle_1, angle_2)
-
+            # update centroid history of object
             track.update_centroid(cX, cY)
-            angle_diff = abs(angle_1-angle_2)
-            angle_diff = round(angle_diff, 2)
-            angle_1 = round(angle_1, 2)
 
-            # if(track.track_id == 21):
-            #     print(angle_diff)
+            # check if slope of centroid points are significant to decide that the direction change is valid
+            sig_slope = abs(slope) >= 1
 
-        # draw bbox on screen
+            direction_change = ""
+            # compare directions for each selected centroid if detection mode is set to 0 (tracking significant change)
+            if detection_mode == 0:
+                direction_change = dir_1 != dir_2
+            elif track_direction is not None:
+                # compare direction against the set direction, mode 1 to use general mass direction, mode 2 to use user-specified direction 
+                direction_change = track_direction != default_direction
+
             color = colors[int(track.track_id) % len(colors)]
             color = [i * 255 for i in color]
 
-            # if angle_diff > 50:
-            # # if prev_centroid_1 is not None and prev_centroid_2 is not None:
-            #     cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
-            #     print(track.track_id, angle_1, angle_2, angle_diff)
+            annotation = "{}".format(str(track.track_id))
+            if track_direction is not None:
+                annotation = "{}-{}".format(str(track.track_id), track_direction)
 
-                # cv2.rectangle(frame, (x1, y1-30), (x1+(len(str(angle_diff)))*17, y1), color, -1)
-                # cv2.putText(frame, str(angle_diff),(x1, y1-10), 0 , 0.75, (255,255,255), 2)
-                # cv2.line(frame, curr_centroid, prev_centroid_1,color,3)
-                # cv2.line(frame, prev_centroid_1, prev_centroid_2,color,3)
-            # cv2.putText(frame, str(track.track_id),(x1, y1-10), 0 , 0.75, color, 2)
+            # mark objects detected with significant change in direction
+            if (detection_mode == 0 and direction_change and sig_slope) or (detection_mode > 0 and direction_change):
+                annotation = "ALERT-{}".format(track_direction)
+                print(track.track_id, prev_centroid_2, prev_centroid_1, curr_centroid, dir_1, dir_2, dir_3, direction_change, slope, distance)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
+                cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(annotation))*16, int(bbox[1])), (255, 0, 0), -1)
+                cv2.putText(frame, annotation,(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255), 1)
 
-            all_centroids = track.centroids
-            for cent in all_centroids:
-                cv2.circle(frame, cent, radius=0, color=color, thickness=5)
+                # all_centroids = track.centroids
+                # for cent in all_centroids:
+                #     cv2.circle(frame, cent, radius=0, color=(255, 0, 0), thickness=5)
 
-            # cv2.putText(frame, str(curr_centroid),(x1, y1-10), 0 , 0.75, color, 2)
+            # annotate object for tracking
+            else:    
+                cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), color, 1)
+                cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(annotation))*16, int(bbox[1])), color, -1)
+                cv2.putText(frame, annotation,(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255), 1)
 
-            # else:
-            # cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
-            #     cv2.rectangle(frame, (x1, y1-30), (x1+(len(str(angle_1)))*17, y1), color, -1)
-            #     cv2.putText(frame, str(angle_1),(x1, y1-10), 0 , 0.75, (255,255,255), 2)
-
-            # cv2.putText(frame, str(track.track_id),(x1, y1-25), 0 , 0.75, (0,255,0), 2)
-
-            # cv2.rectangle(frame, (x1, y1-30), (x1+(len(str(track.track_id)))*17, y1), color, -1)
-            # cv2.putText(frame, str(track.track_id),(x1, y1-10), 0 , 0.75, (255,255,255), 2)
-
-            # cv2.circle(frame, (cX, cY), radius=0, color=color, thickness=20)
-
-            # print("Tracker ID: {}, Class: {},  BBox Coords (xmin, ymin, xmax, ymax): {}".format(str(track.track_id), class_name, (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))))
-
+        # update default direction to the dominant direction of all objects in the frame
+        if(detection_mode == 1 and len(directions) > 0):
+            default_direction = max(set(directions), key=directions.count)
+    
         result = np.asarray(frame)
         result = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        
+        result_bw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
         cv2.imshow("Output Video", result)
 
         # write the result
