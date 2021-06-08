@@ -29,10 +29,13 @@ flags.DEFINE_boolean('tiny', False, 'yolo or yolo-tiny')
 flags.DEFINE_string('model', 'yolov4', 'yolov3 or yolov4')
 flags.DEFINE_float('iou', 0.20, 'iou threshold')
 flags.DEFINE_float('score', 0.10, 'score threshold')
-flags.DEFINE_string('video', './data/video/pedestrian.mp4', 'path to input video or set to 0 for webcam')
+flags.DEFINE_string('video', './data/video/physci-edited-480p.mov', 'path to input video or set to 0 for webcam')
 flags.DEFINE_string('output', 'output/output.mp4', 'path to output video')
 flags.DEFINE_string('direction', '', 'pedestrian direction to map')
 flags.DEFINE_integer('mode', 0, '0 - detect pedestrian significantly changing direction, 1 - detect pedestrian who go against the general direction of all objects in the frame, 2 - detect pedestrian who go against the set direction')
+flags.DEFINE_boolean('rotate', False, 'rotate image')
+flags.DEFINE_boolean('scale', False, 'scale image')
+flags.DEFINE_boolean('preprocess', False, 'preprocess the image before tracking')
 
 
 def main(_argv):
@@ -68,14 +71,6 @@ def main(_argv):
     except:
         vid = cv2.VideoCapture(video_path)
 
-    #define video writer to output video
-    video_writer = None
-    width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = int(vid.get(cv2.CAP_PROP_FPS))
-    codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
-    video_writer = cv2.VideoWriter(FLAGS.output, codec, fps, (width, height))
-
     frame_num = 0
 
     # get direction detection mode
@@ -86,9 +81,53 @@ def main(_argv):
     else:
         default_direction = ""
 
+    # get processing attributes
+    rotate_flag = FLAGS.rotate
+    scale_flag = FLAGS.scale
+    preprocess_flag = FLAGS.preprocess
+
+    #create background model
+    backSub = cv2.createBackgroundSubtractorKNN()
+
+    #define video writer to output video
+    video_writer = None
+
+    if scale_flag:
+        width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH)*2)
+        height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT)*2)
+
+    else:
+        width = int(vid.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(vid.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    if rotate_flag:
+        tmp = width
+        width = height
+        height = tmp
+
+    fps = int(vid.get(cv2.CAP_PROP_FPS))
+    codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
+    video_writer = cv2.VideoWriter(FLAGS.output, codec, fps, (width, height))
+
     while True:
         return_value, frame = vid.read()
         if return_value:
+
+            # rotate frame by 90 degrees if rotate flag is True
+            if rotate_flag:
+                frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+
+            # scale frame to 200% if scale flag is True
+            if scale_flag:
+                width = int(frame.shape[1] * 2)
+                height = int(frame.shape[0] * 2)
+                dim = (width, height)
+                frame = cv2.resize(frame, dim, interpolation = cv2.INTER_AREA)
+
+            # enahnce frame if preprocess flag is True
+            if preprocess_flag:
+                fg, bg, frame = spot.preprocessing(frame, backSub)
+
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(frame)
         else:
@@ -96,7 +135,6 @@ def main(_argv):
             break
 
         frame_num += 1
-        # if frame_num < 2000: continue
 
         directions = []
 
@@ -255,8 +293,6 @@ def main(_argv):
                 # compare direction against the set direction, mode 1 to use general mass direction, mode 2 to use user-specified direction 
                 direction_change = track_direction != default_direction
 
-            print(track_direction, default_direction, detection_mode, direction_change)
-            
             color = colors[int(track.track_id) % len(colors)]
             color = [i * 255 for i in color]
 
@@ -267,7 +303,7 @@ def main(_argv):
             # mark objects detected with significant change in direction
             if (detection_mode == 0 and direction_change and sig_slope) or (detection_mode > 0 and direction_change):
                 annotation = "ALERT-{}".format(track_direction)
-                # print(track.track_id, prev_centroid_2, prev_centroid_1, curr_centroid, dir_1, dir_2, dir_3, direction_change, slope, distance)
+                print(track.track_id, prev_centroid_2, prev_centroid_1, curr_centroid, dir_1, dir_2, dir_3, direction_change, slope, distance)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
                 cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(annotation))*16, int(bbox[1])), (255, 0, 0), -1)
                 cv2.putText(frame, annotation,(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255), 1)

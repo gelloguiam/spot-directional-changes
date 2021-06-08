@@ -1,30 +1,57 @@
+import cv2
 import math
 import numpy as np
 
-def get_angle(p1, p2):
-    (x1, y1) = p1
-    (x2, y2) = p2
-    x3 = x1
-    y3 = y2
+#enhance detail of the foreground
+def enhance_detail(image):
+    hsv_img = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    clahe = cv2.createCLAHE(clipLimit = 1.0)
 
-    p3 = (x3, y3)
+    channels = cv2.split(hsv_img)
+    channels[0] = clahe.apply(channels[0])
+    channels[1] = clahe.apply(channels[1])
+    channels[2] = clahe.apply(channels[2])
 
-    a = get_distance(p1, p2)
-    b = get_distance(p1, p3)
-    c = get_distance(p2, p3)
+    hsv_img = cv2.merge(channels)
+    img = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2BGR)
+    img = cv2.detailEnhance(img, sigma_s=0.2, sigma_r=0.2)
 
-    if b == 0 or c == 0:
-        # print("ZERO:", p1, p2, p3, a, b, c)
-        return 0
+    return img
 
-    z = (c**2 - a**2 - b**2)/(-2*b*a)
-    angle_rad = math.acos(z)
-    angle_deg = math.degrees(angle_rad)
+# clean foreground mask
+def morphological_transform(image):
+    blur = cv2.GaussianBlur(image, (1,1), 0)
+    _, th = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY)
 
-    return angle_deg
-    # print(p1, p2, p3, a, b, c, angle_deg)
+    kernel = np.ones((3, 3), np.uint8)
+    transformed = cv2.erode(th, kernel, iterations=1)
+    transformed = cv2.morphologyEx(th, cv2.MORPH_OPEN, kernel)
+
+    kernel = np.ones((5, 5), np.uint8)
+    transformed = cv2.morphologyEx(transformed, cv2.MORPH_CLOSE, kernel)
+    return transformed
 
 
+def preprocessing(frame, backSub):
+    # extract and enhance foreground
+    fg_mask = backSub.apply(frame)
+    fg_mask = morphological_transform(fg_mask)
+    extracted_fg = cv2.bitwise_and(frame, frame, mask=fg_mask)
+    extracted_fg = enhance_detail(extracted_fg)
+
+    # extract and enhance background
+    bg_mask = 255 - fg_mask
+    
+    extracted_bg = cv2.bitwise_and(frame, frame, mask=bg_mask)
+    #suppress edges from the background
+    extracted_bg = cv2.edgePreservingFilter(extracted_bg, flags=1, sigma_s=50, sigma_r=0.2)
+
+    #combine fg and bg
+    image = cv2.add(extracted_fg, extracted_bg)
+    return extracted_fg, extracted_bg, image
+
+
+# get distance between teo 
 def get_distance(p1, p2):
     (x1, y1) = p1
     (x2, y2) = p2
@@ -32,7 +59,7 @@ def get_distance(p1, p2):
     d = math.sqrt((x2-x1)**2 + (y2-y1)**2)
     return d
 
-
+# function to get the slope of the line, will decide the significance of the direction change
 def get_slope(p1, p2):
     (x1, y1) = p1
     (x2, y2) = p2
@@ -40,27 +67,8 @@ def get_slope(p1, p2):
     if (x1 == x2): return 0
     return (y2-y1)/(x2-x1)
 
-# def get_direction(p1, p2):
-#     (x1, y1) = p1
-#     (x2, y2) = p2
 
-#     dX = x2 - x1
-#     dY = y2 - y1
-
-#     direction = ""
-
-#     if(dY < 0):
-#         direction += "N"
-#     elif(dY > 0):
-#         direction += "S"
-
-#     if(dX < 0):
-#         direction += "W"
-#     elif(dX > 0):
-#         direction += "E"
-    
-#     return direction
-
+# return direction between two points, distance threshold set to 3 pixels at least
 def get_direction(prevPoint, currentPoint):
     dX = currentPoint[0] - prevPoint[0]
     dY = prevPoint[1] - currentPoint[1]
