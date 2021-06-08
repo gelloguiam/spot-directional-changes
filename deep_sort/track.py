@@ -89,8 +89,12 @@ class Track:
     def get_last_centroid(self, n):
         length = len(self.centroids)
 
-        if(length >= n):
-            return self.centroids[length-n]
+        if (length > 30):
+            if n == 0: return self.centroids[length-30]
+            if n == 1: return self.centroids[length-15]
+            elif n ==2: return self.centroids[length-30]
+        # if(length >= n):
+        #     return self.centroids[length-n]
         
         return None
 
