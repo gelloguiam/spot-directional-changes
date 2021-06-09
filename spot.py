@@ -262,7 +262,6 @@ def main(_argv):
 
             dir_1 = ""
             dir_2 = ""
-            dir_3 = ""
 
             track_direction = None
             if prev_centroid_1 is not None and prev_centroid_2 is not None:
@@ -277,7 +276,6 @@ def main(_argv):
                     slope = spot.get_slope(prev_centroid_1, curr_centroid)
                     dir_1 = spot.get_direction(prev_centroid_1, curr_centroid)
                     dir_2 = spot.get_direction(prev_centroid_2, prev_centroid_1)
-                    dir_3 = spot.get_direction(track.get_last_centroid(0), curr_centroid)
 
             # update centroid history of object
             track.update_centroid(cX, cY)
@@ -303,7 +301,7 @@ def main(_argv):
             # mark objects detected with significant change in direction
             if (detection_mode == 0 and direction_change and sig_slope) or (detection_mode > 0 and direction_change):
                 annotation = "ALERT-{}".format(track_direction)
-                print(track.track_id, prev_centroid_2, prev_centroid_1, curr_centroid, dir_1, dir_2, dir_3, direction_change, slope, distance)
+                print(track.track_id, prev_centroid_2, prev_centroid_1, curr_centroid, dir_1, dir_2, direction_change, slope, distance)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
                 cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(annotation))*16, int(bbox[1])), (255, 0, 0), -1)
                 cv2.putText(frame, annotation,(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255), 1)
