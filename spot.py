@@ -27,8 +27,8 @@ flags.DEFINE_string('weights', './checkpoints/yolov4-416', 'path to weights file
 flags.DEFINE_integer('size', 416, 'resize images to')
 flags.DEFINE_boolean('tiny', False, 'yolo or yolo-tiny')
 flags.DEFINE_string('model', 'yolov4', 'yolov3 or yolov4')
-flags.DEFINE_float('iou', 0.20, 'iou threshold')
-flags.DEFINE_float('score', 0.10, 'score threshold')
+flags.DEFINE_float('iou', 0.4, 'iou threshold')
+flags.DEFINE_float('score', 0.3, 'score threshold')
 flags.DEFINE_string('video', './data/video/physci-edited-480p.mov', 'path to input video or set to 0 for webcam')
 flags.DEFINE_string('output', 'output/output.mp4', 'path to output video')
 flags.DEFINE_string('direction', '', 'pedestrian direction to map')
@@ -109,6 +109,9 @@ def main(_argv):
     codec = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
     video_writer = cv2.VideoWriter(FLAGS.output, codec, fps, (width, height))
 
+    avg_detection = 0
+    start_time = time.time()
+
     while True:
         return_value, frame = vid.read()
         if return_value:
@@ -138,7 +141,7 @@ def main(_argv):
 
         directions = []
 
-        print('Frame #: ', frame_num)
+        # print('Frame #: ', frame_num)
         image_data = cv2.resize(frame, (input_size, input_size))
         image_data = image_data / 255.
         image_data = image_data[np.newaxis, ...].astype(np.float32)
@@ -200,6 +203,7 @@ def main(_argv):
         scores = np.delete(scores, deleted_indx, axis=0)
 
         count = len(names)
+        avg_detection += count
 
         session_title = "Tracking pedestrian "
 
@@ -215,6 +219,12 @@ def main(_argv):
 
         cv2.rectangle(frame, (10, 42), (15+(len(session_summary)*12), 65), (0, 0, 0), -1)
         cv2.putText(frame, session_summary, (10, 60), cv2.FONT_HERSHEY_PLAIN, 1.3, (0, 255, 0), 1)
+
+        cv2.putText(frame, "N", (30, 100), cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 0, 0), 2)
+        cv2.putText(frame, "W", (10, 120), cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 0, 0), 2)
+        cv2.putText(frame, "E", (50, 120), cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 0, 0), 2)
+        cv2.putText(frame, "S", (30, 140), cv2.FONT_HERSHEY_PLAIN, 1.5, (255, 0, 0), 2)
+
 
         # encode yolo detections and feed to tracker
         features = encoder(frame, bboxes)
@@ -301,17 +311,22 @@ def main(_argv):
             # mark objects detected with significant change in direction
             if (detection_mode == 0 and direction_change and sig_slope) or (detection_mode > 0 and direction_change):
                 annotation = "ALERT-{}".format(track_direction)
-                print(track.track_id, prev_centroid_2, prev_centroid_1, curr_centroid, dir_1, dir_2, direction_change, slope, distance)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 5)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 3)
                 cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(annotation))*16, int(bbox[1])), (255, 0, 0), -1)
                 cv2.putText(frame, annotation,(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255), 1)
 
+                # print centroid history
                 # all_centroids = track.centroids
                 # for cent in all_centroids:
                 #     cv2.circle(frame, cent, radius=0, color=(255, 0, 0), thickness=5)
 
+                # print three centroids
+                # cv2.circle(frame, curr_centroid, radius=1, color=color, thickness=10)
+                # cv2.circle(frame, prev_centroid_1, radius=1, color=color, thickness=10)
+                # cv2.circle(frame, prev_centroid_2, radius=1, color=color, thickness=10)
+
             # annotate object for tracking
-            else:    
+            else:
                 cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])), color, 1)
                 cv2.rectangle(frame, (int(bbox[0]), int(bbox[1]-30)), (int(bbox[0])+(len(annotation))*16, int(bbox[1])), color, -1)
                 cv2.putText(frame, annotation,(int(bbox[0]), int(bbox[1]-10)),0, 0.75, (255,255,255), 1)
@@ -335,6 +350,7 @@ def main(_argv):
 
     cv2.destroyAllWindows()
 
+    print("Average person detected: {}, runtime: {}".format(avg_detection/300, (time.time() - start_time)))
 
 if __name__ == '__main__':
     try:
